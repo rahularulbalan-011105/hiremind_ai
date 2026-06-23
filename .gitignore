@@ -1,0 +1,40 @@
+# Secrets / local config
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+
+# Artifacts (uploaded resumes, trained models, cached HF weights)
+artifacts/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+frontendv01/
+frontend/

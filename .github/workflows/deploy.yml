@@ -1,0 +1,68 @@
+name: Deploy frontendv01 to GitHub Pages
+
+on:
+  # Run on every push to main (only when something inside frontendv01/ changes)
+  push:
+    branches: [main]
+    paths:
+      - "frontendv01/**"
+      - ".github/workflows/deploy.yml"
+  # Allow manual runs from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Don't queue up parallel deploys; cancel any in-progress one when a new push arrives
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontendv01
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontendv01/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build static site
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Add .nojekyll
+        # Tells GitHub Pages NOT to run Jekyll on the output —
+        # files/folders starting with _ would otherwise be ignored.
+        run: touch out/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontendv01/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

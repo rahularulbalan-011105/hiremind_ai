@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql --version)",
+      "Bash(npx --version)"
+    ]
+  }
+}
