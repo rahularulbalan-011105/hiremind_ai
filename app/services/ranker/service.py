@@ -50,18 +50,20 @@ class RankerService:
 
     def rank(
         self,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         *,
         job_id: UUID,
         weights: RankerWeights,
         top_k: int,
         force_recompute: bool,
     ) -> RankerResponse:
-        job = JobRepository(session).get(job_id)
+        job = JobRepository(company_session).get(job_id)
         if job is None:
             raise NotFoundError(f"Job {job_id} not found.")
 
-        candidate_rows = session.execute(
+        # Candidates + resume embeddings live in candidate DB.
+        candidate_rows = candidate_session.execute(
             select(
                 Candidate.id,
                 Candidate.full_name,
@@ -81,17 +83,18 @@ class RankerService:
             )
 
         candidate_ids = [r.id for r in candidate_rows]
-        match_map = self._load_match_scores(session, job_id, candidate_ids)
-        trust_map = self._load_trust_scores(session, candidate_ids)
+        match_map = self._load_match_scores(company_session, job_id, candidate_ids)
+        trust_map = self._load_trust_scores(candidate_session, candidate_ids)
         hiring_map = self._load_hiring_predictions(
-            session, job_id, candidate_ids, self.hiring_predictor_service.model_version
+            company_session, job_id, candidate_ids, self.hiring_predictor_service.model_version
         )
 
-        candidate_repo = CandidateRepository(session)
+        candidate_repo = CandidateRepository(candidate_session)
         hits: list[RankedHit] = []
         for row in candidate_rows:
             hit = self._build_hit(
-                session=session,
+                candidate_session=candidate_session,
+                company_session=company_session,
                 cand_id=row.id,
                 full_name=row.full_name,
                 headline=row.headline,
@@ -129,21 +132,22 @@ class RankerService:
 
     def compare(
         self,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         *,
         job_id: UUID,
         candidate_ids: list[UUID],
         weights: RankerWeights,
     ) -> CompareResponse:
-        job = JobRepository(session).get(job_id)
+        job = JobRepository(company_session).get(job_id)
         if job is None:
             raise NotFoundError(f"Job {job_id} not found.")
 
-        candidate_repo = CandidateRepository(session)
-        match_map = self._load_match_scores(session, job_id, candidate_ids)
-        trust_map = self._load_trust_scores(session, candidate_ids)
+        candidate_repo = CandidateRepository(candidate_session)
+        match_map = self._load_match_scores(company_session, job_id, candidate_ids)
+        trust_map = self._load_trust_scores(candidate_session, candidate_ids)
         hiring_map = self._load_hiring_predictions(
-            session, job_id, candidate_ids, self.hiring_predictor_service.model_version
+            company_session, job_id, candidate_ids, self.hiring_predictor_service.model_version
         )
 
         hits: list[RankedHit] = []
@@ -152,9 +156,10 @@ class RankerService:
             if candidate is None:
                 continue
             hit = self._build_hit(
-                session=session,
+                candidate_session=candidate_session,
+                company_session=company_session,
                 cand_id=cid,
-                full_name=candidate.full_name,
+                full_name=candidate.full_name or "",
                 headline=candidate.headline,
                 location=candidate.location,
                 weights=weights,
@@ -222,7 +227,8 @@ class RankerService:
     def _build_hit(
         self,
         *,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         cand_id: UUID,
         full_name: str,
         headline: str | None,
@@ -239,7 +245,8 @@ class RankerService:
         match_row = match_map.get(cand_id)
         if match_row is None or force_recompute:
             mr = self.match_service.score(
-                session,
+                candidate_session,
+                company_session,
                 candidate_id=cand_id,
                 job_id=job_id,
                 weights=MatchWeights(),
@@ -255,7 +262,8 @@ class RankerService:
         hp_row = hiring_map.get(cand_id)
         if hp_row is None or force_recompute:
             hr = self.hiring_predictor_service.predict(
-                session,
+                candidate_session,
+                company_session,
                 candidate_id=cand_id,
                 job_id=job_id,
                 force_recompute=force_recompute,
@@ -323,19 +331,20 @@ class RankerService:
 
     @staticmethod
     def _match_summary_from_row(row: MatchScore) -> str:
-        blob = row.reasoning if isinstance(row.reasoning, dict) else {}
-        matched = blob.get("matched_skills") or []
-        missing = blob.get("missing_skills") or []
-        cand_years = blob.get("candidate_years")
-        req_years = blob.get("required_years")
+        """
+        In the new schema `row.reasoning` holds just the bullets list and
+        `row.subscores` holds the numeric breakdown. The richer `matched_skills`
+        / `missing_skills` arrays from the legacy blob are no longer persisted,
+        so we summarize from subscores only.
+        """
+        sub = dict(row.subscores or {})
         parts: list[str] = []
-        if matched:
-            parts.append(f"{len(matched)} matched")
-        if missing:
-            parts.append(f"{len(missing)} missing")
-        if isinstance(cand_years, (int, float)) and isinstance(req_years, (int, float)):
-            gap = float(cand_years) - float(req_years)
-            parts.append(f"{gap:+.1f}y exp")
+        if (s := sub.get("semantic")) is not None:
+            parts.append(f"sem {int(round(float(s)))}")
+        if (s := sub.get("skill_overlap")) is not None:
+            parts.append(f"sk {int(round(float(s)))}")
+        if (s := sub.get("experience")) is not None:
+            parts.append(f"exp {int(round(float(s)))}")
         if not parts:
             parts.append("semantic only")
         return " · ".join(parts)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import session_dep
+from app.api.v1.deps import company_session_dep
 from app.schemas.ghost_job import GhostScoreRequest, GhostScoreResponse
 from app.services.ghost_jobs import GhostJobService
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/jobs", tags=["ghost-jobs"])
 )
 def ghost_score(
     body: GhostScoreRequest,
-    session: Session = Depends(session_dep),
+    session: Session = Depends(company_session_dep),
 ) -> GhostScoreResponse:
     """
     **Example request**:

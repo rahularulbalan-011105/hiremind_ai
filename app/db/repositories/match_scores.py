@@ -11,6 +11,8 @@ from app.db.models import MatchScore
 
 
 class MatchScoreRepository:
+    """Lives in `hiremind_company`. `candidate_id` is a bare UUID (cross-DB)."""
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -29,17 +31,34 @@ class MatchScoreRepository:
         score: float,
         reasoning_blob: dict,
     ) -> MatchScore:
+        """
+        Accepts the legacy `reasoning_blob` shape:
+            {"bullets": [...], "subscores": {...}, "weights": {...}}
+        and splits it into the three top-level JSONB columns on the new schema.
+        """
+        bullets = reasoning_blob.get("bullets", []) if isinstance(reasoning_blob, dict) else []
+        subscores = reasoning_blob.get("subscores", {}) if isinstance(reasoning_blob, dict) else {}
+        weights = reasoning_blob.get("weights", {}) if isinstance(reasoning_blob, dict) else {}
+
+        score_dec = Decimal(str(round(score, 2)))
         stmt = (
             pg_insert(MatchScore)
             .values(
                 candidate_id=candidate_id,
                 job_id=job_id,
-                score=Decimal(str(round(score, 2))),
-                reasoning=reasoning_blob,
+                score=score_dec,
+                reasoning=bullets,
+                subscores=subscores,
+                weights=weights,
             )
             .on_conflict_do_update(
                 index_elements=[MatchScore.candidate_id, MatchScore.job_id],
-                set_={"score": Decimal(str(round(score, 2))), "reasoning": reasoning_blob},
+                set_={
+                    "score": score_dec,
+                    "reasoning": bullets,
+                    "subscores": subscores,
+                    "weights": weights,
+                },
             )
             .returning(MatchScore)
         )

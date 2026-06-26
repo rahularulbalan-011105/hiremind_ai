@@ -1,3 +1,9 @@
+"""
+Embedding tables.
+
+  * ResumeEmbedding → hiremind_candidate.resume_embeddings (CandidateBase)
+  * JobEmbedding    → hiremind_company.job_embeddings      (CompanyBase)
+"""
 from datetime import datetime
 from uuid import UUID
 
@@ -6,13 +12,13 @@ from sqlalchemy import DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.models.base import Base
+from app.db.models.base import CandidateBase, CompanyBase
 
-# Dimension must match the schema in db/init/02_schema.sql and the loaded embedding model.
+# Must match the live schema and the loaded sentence-transformers model.
 _EMBED_DIM = 768
 
 
-class ResumeEmbedding(Base):
+class ResumeEmbedding(CandidateBase):
     __tablename__ = "resume_embeddings"
 
     id: Mapped[UUID] = mapped_column(
@@ -20,7 +26,7 @@ class ResumeEmbedding(Base):
     )
     candidate_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("candidates.id", ondelete="CASCADE"),
+        ForeignKey("candidate.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
     )
@@ -29,7 +35,7 @@ class ResumeEmbedding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
 
 
-class JobEmbedding(Base):
+class JobEmbedding(CompanyBase):
     __tablename__ = "job_embeddings"
 
     id: Mapped[UUID] = mapped_column(

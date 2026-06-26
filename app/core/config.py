@@ -12,8 +12,19 @@ class Settings(BaseSettings):
     app_env: Literal["development", "staging", "production"] = "development"
     log_level: str = "INFO"
 
-    # Database
-    database_url: str = "postgresql+psycopg://hrms_ai:hrms_ai@localhost:5432/hrms_ai"
+    # Database — split per microservice (the AI service reads/writes against three Postgres DBs)
+    # `candidate_database_url`  → hiremind_candidate (owns: candidate*, parse_jobs, resume_embeddings, fake_profile_scores)
+    # `company_database_url`    → hiremind_company   (owns: jobs*, job_embeddings, match_scores, ghost_job_scores, duplicate_job_clusters, hiring_predictions, hiring_outcomes, ml_models)
+    # `users_database_url`      → hiremind_users     (read-only, optional — used only if we need to resolve user_id → user details)
+    candidate_database_url: str = (
+        "postgresql+psycopg://postgres:postgres@localhost:5432/hiremind_candidate"
+    )
+    company_database_url: str = (
+        "postgresql+psycopg://postgres:postgres@localhost:5432/hiremind_company"
+    )
+    users_database_url: str = (
+        "postgresql+psycopg://postgres:postgres@localhost:5432/hiremind_users"
+    )
     pgvector_dim: int = 768
 
     # Redis / Celery (declared now, used when we add Celery)

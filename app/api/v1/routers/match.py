@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import session_dep
+from app.api.v1.deps import candidate_session_dep, company_session_dep
 from app.core.config import Settings, get_settings
 from app.llm import LLMClient, get_llm_client
 from app.schemas.match import (
@@ -37,7 +37,8 @@ def _llm_dep(
 )
 def score_match(
     body: MatchRequest,
-    session: Session = Depends(session_dep),
+    candidate_session: Session = Depends(candidate_session_dep),
+    company_session: Session = Depends(company_session_dep),
     llm: LLMClient = Depends(_llm_dep),
 ) -> MatchResponse:
     """
@@ -57,7 +58,8 @@ def score_match(
     weights = body.weights or MatchWeights()
     service = MatchEngineService(llm)
     return service.score(
-        session,
+        candidate_session,
+        company_session,
         candidate_id=body.candidate_id,
         job_id=body.job_id,
         weights=weights,
@@ -72,7 +74,8 @@ def score_match(
 )
 def score_by_job(
     body: MatchByJobRequest,
-    session: Session = Depends(session_dep),
+    candidate_session: Session = Depends(candidate_session_dep),
+    company_session: Session = Depends(company_session_dep),
     llm: LLMClient = Depends(_llm_dep),
 ) -> MatchByJobResponse:
     """
@@ -93,7 +96,8 @@ def score_by_job(
     weights = body.weights or MatchWeights()
     service = MatchEngineService(llm)
     return service.score_by_job(
-        session,
+        candidate_session,
+        company_session,
         job_id=body.job_id,
         weights=weights,
         top_k=body.top_k,

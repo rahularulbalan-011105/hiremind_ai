@@ -1,31 +1,48 @@
+# Local dev shortcut.
+#
+# In production the AI service connects to the live Postgres instance(s) used
+# by the candidate-service / company-service / users-service Spring Boot apps,
+# which manage their own schemas via Flyway. For local dev you can either:
+#
+#   (a) Point the *_DATABASE_URL env vars at the Postgres the Spring services
+#       already use, OR
+#   (b) Run the Spring services with this compose's Postgres so they create
+#       the three databases + apply Flyway migrations, then the AI service
+#       connects to the same instance.
+#
+# This file no longer creates DB schemas of its own. The AI service is purely
+# a consumer.
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: hrms_ai_db
+    container_name: hiremind_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-hrms_ai}
-      POSTGRES_USER: ${POSTGRES_USER:-hrms_ai}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hrms_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # NOTE: the three databases (hiremind_candidate, hiremind_company,
+      # hiremind_users) are created by the Spring Boot services on first boot.
+      # If you need them up front, run `db/create_dev_databases.sh` after the
+      # container is healthy.
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - hrms_ai_pgdata:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - hiremind_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hrms_ai} -d ${POSTGRES_DB:-hrms_ai}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: hrms_ai_redis
+    container_name: hiremind_redis
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - hrms_ai_redisdata:/data
+      - hiremind_redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -33,5 +50,5 @@ services:
       retries: 10
 
 volumes:
-  hrms_ai_pgdata:
-  hrms_ai_redisdata:
+  hiremind_pgdata:
+  hiremind_redisdata:

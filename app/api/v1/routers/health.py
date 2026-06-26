@@ -15,11 +15,13 @@ def health(
     embedding_service: EmbeddingService = Depends(embedding_service_dep),
     settings: Settings = Depends(get_settings),
 ) -> HealthResponse:
-    db_ok = False
     try:
-        db_ok = ping()
+        results = ping()
     except Exception:
-        db_ok = False
+        results = {}
+    # Healthy only if every wired DB responded. Embedding model is loaded
+    # eagerly at startup, so by here it's already in memory.
+    db_ok = bool(results) and all(results.values())
 
     return HealthResponse(
         status="ok" if db_ok else "degraded",

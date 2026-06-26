@@ -34,16 +34,25 @@ class HiringPredictionRepository:
         confidence: float,
         shap_blob: dict,
         model_version: str,
+        model_type: str | None = None,
     ) -> HiringPrediction:
+        # If model_type wasn't passed but is embedded in the shap_blob (legacy
+        # callers stored it there), lift it out into the dedicated column.
+        if model_type is None and isinstance(shap_blob, dict):
+            model_type = shap_blob.get("model_type")
+
+        prob = Decimal(str(round(probability, 4)))
+        conf = Decimal(str(round(confidence, 4)))
         stmt = (
             pg_insert(HiringPrediction)
             .values(
                 candidate_id=candidate_id,
                 job_id=job_id,
-                probability=Decimal(str(round(probability, 4))),
-                confidence=Decimal(str(round(confidence, 4))),
+                probability=prob,
+                confidence=conf,
                 shap=shap_blob,
                 model_version=model_version,
+                model_type=model_type,
             )
             .on_conflict_do_update(
                 index_elements=[
@@ -52,9 +61,10 @@ class HiringPredictionRepository:
                     HiringPrediction.model_version,
                 ],
                 set_={
-                    "probability": Decimal(str(round(probability, 4))),
-                    "confidence": Decimal(str(round(confidence, 4))),
+                    "probability": prob,
+                    "confidence": conf,
                     "shap": shap_blob,
+                    "model_type": model_type,
                 },
             )
             .returning(HiringPrediction)

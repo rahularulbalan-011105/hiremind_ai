@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.exceptions import HrmsAIError
 from app.core.logging import get_logger
 from app.db.repositories.parse_jobs import ParseJobRepository
-from app.db.session import get_session
+from app.db.session import get_candidate_session, init_engine
 from app.llm import get_llm_client
 from app.services.embeddings import EmbeddingService
 from app.services.resume_parser import ResumeParserService
@@ -25,6 +25,9 @@ def _get_embedding_service() -> EmbeddingService:
     global _embedding_service
     if _embedding_service is None:
         settings = get_settings()
+        # The worker process has its own copy of the settings, engines etc.
+        # init_engine is idempotent; safe to call here.
+        init_engine(settings)
         store = get_vector_store(settings)
         _embedding_service = EmbeddingService(settings.embedding_model, store)
         _embedding_service.warm_up()
@@ -46,7 +49,9 @@ def parse_resume(self, parse_job_id: str, file_path: str) -> dict:
     job_uuid = UUID(parse_job_id)
     path = Path(file_path)
 
-    session_iter = get_session()
+    # Resume parsing writes to the candidate DB (candidate, parse_jobs,
+    # resume_embeddings, fake_profile_scores etc.).
+    session_iter = get_candidate_session()
     session = next(session_iter)
     try:
         llm = get_llm_client(settings)

@@ -3,7 +3,11 @@ import math
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import embedding_service_dep, session_dep
+from app.api.v1.deps import (
+    candidate_session_dep,
+    company_session_dep,
+    embedding_service_dep,
+)
 from app.schemas.embeddings import EmbeddingRequest, EmbeddingResponse
 from app.services.embeddings import EmbeddingService
 
@@ -18,7 +22,8 @@ router = APIRouter(prefix="/embeddings", tags=["embeddings"])
 )
 def generate_embedding(
     body: EmbeddingRequest,
-    session: Session = Depends(session_dep),
+    candidate_session: Session = Depends(candidate_session_dep),
+    company_session: Session = Depends(company_session_dep),
     embedding_service: EmbeddingService = Depends(embedding_service_dep),
 ) -> EmbeddingResponse:
     """
@@ -38,6 +43,8 @@ def generate_embedding(
     stored_kind = None
     stored_entity_id = None
     if body.store_as is not None:
+        # Resume embeddings live in hiremind_candidate; job embeddings in hiremind_company.
+        session = candidate_session if body.store_as.kind == "resume" else company_session
         embedding_service.store(session, body.store_as.kind, body.store_as.id, vector)
         stored = True
         stored_kind = body.store_as.kind

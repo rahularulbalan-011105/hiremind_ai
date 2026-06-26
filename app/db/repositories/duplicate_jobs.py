@@ -11,6 +11,14 @@ from app.db.models import DuplicateJobCluster
 
 
 class DuplicateJobRepository:
+    """Lives in `hiremind_company`.
+
+    The live schema kept the old `(job_id, duplicate_of_job_id, similarity, method)`
+    pair AND added a richer `(job_a, job_b, verdict, title_sim, embedding_sim,
+    skill_jaccard)` pair. This repo writes the legacy pair (no API change) and
+    mirrors `job_id`/`duplicate_of_job_id` into `job_a`/`job_b` for parity.
+    """
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -32,13 +40,16 @@ class DuplicateJobRepository:
         similarity: float,
         method: str,
     ) -> None:
+        sim = Decimal(str(round(similarity, 4)))
         stmt = (
             pg_insert(DuplicateJobCluster)
             .values(
                 job_id=job_id,
                 duplicate_of_job_id=duplicate_of_job_id,
-                similarity=Decimal(str(round(similarity, 4))),
+                similarity=sim,
                 method=method,
+                job_a=job_id,
+                job_b=duplicate_of_job_id,
             )
             .on_conflict_do_update(
                 index_elements=[
@@ -46,7 +57,7 @@ class DuplicateJobRepository:
                     DuplicateJobCluster.duplicate_of_job_id,
                     DuplicateJobCluster.method,
                 ],
-                set_={"similarity": Decimal(str(round(similarity, 4)))},
+                set_={"similarity": sim},
             )
         )
         self.session.execute(stmt)
@@ -67,12 +78,15 @@ class DuplicateJobRepository:
             )
         )
         for dup_id, sim in pairs:
+            sim_dec = Decimal(str(round(sim, 4)))
             self.session.add(
                 DuplicateJobCluster(
                     job_id=job_id,
                     duplicate_of_job_id=dup_id,
-                    similarity=Decimal(str(round(sim, 4))),
+                    similarity=sim_dec,
                     method=method,
+                    job_a=job_id,
+                    job_b=dup_id,
                 )
             )
         self.session.commit()

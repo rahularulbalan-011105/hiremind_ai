@@ -15,7 +15,7 @@ from app.db.repositories.jobs import JobRepository
 from app.schemas.duplicate_job import DuplicateCheckResponse, DuplicateMatch
 from app.services.duplicate_jobs.detector import (
     classify,
-    normalize_company,
+    normalize_company,  # noqa: F401 — kept available for downstream code paths
     skill_overlap,
     title_similarity,
 )
@@ -55,7 +55,9 @@ class DuplicateJobService:
         target_vec = np.asarray(target_vec_raw, dtype=np.float64)
 
         target_skills = [s["skill"] for s in JobRepository.required_skills(target)]
-        target_company = normalize_company(target.company)
+        # Same-company check now keys on company_id (UUID) since the live
+        # `jobs` table doesn't carry a company name column.
+        target_company = str(target.company_id) if target.company_id is not None else None
 
         # ---- HNSW pre-filter (top-N by cosine distance) ----
         distance = JobEmbedding.embedding.cosine_distance(target_vec_raw)
@@ -63,7 +65,7 @@ class DuplicateJobService:
             select(
                 Job.id,
                 Job.title,
-                Job.company,
+                Job.company_id,
                 JobEmbedding.embedding,
                 (1.0 - distance).label("similarity"),
             )
@@ -75,11 +77,14 @@ class DuplicateJobService:
 
         duplicates: list[DuplicateMatch] = []
         for cand_id, cand_title, cand_company, _cand_vec, sim in rows:
+            # `cand_company` here is a UUID (company_id), not a name. Same-company
+            # comparison degrades to "share the same company_id".
             embedding_sim = float(sim)
             t_sim = title_similarity(target.title, cand_title)
             same_company = (
                 target_company is not None
-                and normalize_company(cand_company) == target_company
+                and cand_company is not None
+                and str(cand_company) == target_company
             )
 
             cand_job = job_repo.get(cand_id)
@@ -146,7 +151,9 @@ class DuplicateJobService:
         # Hydrate cached rows with current titles/companies for display
         job_repo = JobRepository(session)
         target_skills = [s["skill"] for s in JobRepository.required_skills(target)]
-        target_company = normalize_company(target.company)
+        # Same-company check now keys on company_id (UUID) since the live
+        # `jobs` table doesn't carry a company name column.
+        target_company = str(target.company_id) if target.company_id is not None else None
 
         duplicates: list[DuplicateMatch] = []
         for r in rows:
@@ -158,7 +165,8 @@ class DuplicateJobService:
             t_sim = title_similarity(target.title, other.title)
             same_company = (
                 target_company is not None
-                and normalize_company(other.company) == target_company
+                and other.company_id is not None
+                and str(other.company_id) == target_company
             )
             verdict = classify(
                 title_sim=t_sim,

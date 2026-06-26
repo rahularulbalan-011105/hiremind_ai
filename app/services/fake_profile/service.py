@@ -13,7 +13,6 @@ from app.db.models import (
     CandidateCertification,
     CandidateEducation,
     CandidateExperience,
-    CandidateLanguage,
     CandidateSkill,
 )
 from app.db.repositories.candidates import CandidateRepository
@@ -81,13 +80,9 @@ class FakeProfileService:
                 )
             ).scalars().all().__len__()
         )
-        lang_count = (
-            session.execute(
-                select(CandidateLanguage.id).where(
-                    CandidateLanguage.candidate_id == candidate_id
-                )
-            ).scalars().all().__len__()
-        )
+        # `candidate_languages` was dropped in the new schema; the signal still
+        # accepts a language count but we always pass 0 now.
+        lang_count = 0
 
         # 2. Internal duplicate contact lookup (other candidates with same email/phone)
         email_matches: list[str] = []
@@ -99,10 +94,11 @@ class FakeProfileService:
                 )
             ).scalars().all()
             email_matches = [str(r) for r in rows]
-        if candidate.phone:
+        if candidate.phone_number:
             rows = session.execute(
                 select(Candidate.id).where(
-                    Candidate.phone == candidate.phone, Candidate.id != candidate_id
+                    Candidate.phone_number == candidate.phone_number,
+                    Candidate.id != candidate_id,
                 )
             ).scalars().all()
             phone_matches = [str(r) for r in rows]

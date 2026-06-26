@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import embedding_service_dep, session_dep
+from app.api.v1.deps import company_session_dep, embedding_service_dep
 from app.core.exceptions import NotFoundError
 from app.db.models import Job, JobEmbedding
 from app.db.repositories.jobs import JobRepository
@@ -61,7 +61,7 @@ def _jobs_with_embedding_flag(
 )
 def create_job(
     body: JobCreateRequest,
-    session: Session = Depends(session_dep),
+    session: Session = Depends(company_session_dep),
     embedding_service: EmbeddingService = Depends(embedding_service_dep),
 ) -> JobResponse:
     """
@@ -96,7 +96,7 @@ def create_job(
     summary="List jobs (most recent first).",
 )
 def list_jobs(
-    session: Session = Depends(session_dep),
+    session: Session = Depends(company_session_dep),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     status_filter: Literal["active", "paused", "closed", "archived"] | None = Query(
@@ -109,7 +109,7 @@ def list_jobs(
 
 
 @router.get("/{job_id}", response_model=JobResponse, summary="Fetch a job by id.")
-def get_job(job_id: UUID, session: Session = Depends(session_dep)) -> JobResponse:
+def get_job(job_id: UUID, session: Session = Depends(company_session_dep)) -> JobResponse:
     job = JobRepository(session).get(job_id)
     if job is None:
         raise NotFoundError(f"Job {job_id} not found.")

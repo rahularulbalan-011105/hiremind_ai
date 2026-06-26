@@ -64,13 +64,14 @@ class FeatureExtractor:
 
     def extract(
         self,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         *,
         candidate_id: UUID,
         job_id: UUID,
     ) -> FeatureVector:
-        candidate_repo = CandidateRepository(session)
-        job_repo = JobRepository(session)
+        candidate_repo = CandidateRepository(candidate_session)
+        job_repo = JobRepository(company_session)
 
         candidate = candidate_repo.get(candidate_id)
         job = job_repo.get(job_id)
@@ -78,7 +79,7 @@ class FeatureExtractor:
             raise ValueError(f"Candidate {candidate_id} or Job {job_id} not found.")
 
         # 1. Match sub-scores — pull from cached match_scores when present
-        match_row = session.execute(
+        match_row = company_session.execute(
             MatchScore.__table__.select().where(
                 (MatchScore.candidate_id == candidate_id)
                 & (MatchScore.job_id == job_id)
@@ -86,8 +87,9 @@ class FeatureExtractor:
         ).first()
 
         sub: dict[str, float]
-        if match_row is not None and isinstance(match_row.reasoning, dict):
-            cached_sub = match_row.reasoning.get("subscores") or {}
+        # New schema stores subscores in a dedicated JSONB column.
+        cached_sub = dict(match_row.subscores) if (match_row is not None and match_row.subscores) else {}
+        if cached_sub:
             sub = {
                 "semantic_score": float(cached_sub.get("semantic", 50.0)),
                 "skill_overlap_score": float(cached_sub.get("skill_overlap", 50.0)),
@@ -98,7 +100,7 @@ class FeatureExtractor:
             }
         elif self._match_service is not None:
             mr = self._match_service.score(
-                session,
+                candidate_session, company_session,
                 candidate_id=candidate_id,
                 job_id=job_id,
                 weights=MatchWeights(),
@@ -119,16 +121,16 @@ class FeatureExtractor:
                 "location_score", "notice_period_score", "salary_score",
             )}
 
-        # 2. Trust score
-        fp_row = session.execute(
+        # 2. Trust score (lives in hiremind_candidate)
+        fp_row = candidate_session.execute(
             FakeProfileScore.__table__.select().where(
                 FakeProfileScore.candidate_id == candidate_id
             )
         ).first()
         trust = float(fp_row.trust_score) if fp_row is not None else 100.0
         github_verified = 0.0
-        if fp_row is not None and isinstance(fp_row.anomalies, dict):
-            gh = (fp_row.anomalies or {}).get("github_check") or {}
+        if fp_row is not None and fp_row.github_check:
+            gh = dict(fp_row.github_check)
             found = gh.get("claimed_skills_found_in_repos") or []
             github_verified = 1.0 if len(found) > 0 else 0.0
 
@@ -146,7 +148,7 @@ class FeatureExtractor:
             str(k).lower(): float(v) for k, v in (prefs.get("skill_years") or {}).items()
         }
         meets_all = 1.0
-        required = JobRepository.required_skills(job)
+        required = job_repo.required_skills(job)
         if required:
             for entry in required:
                 skill = str(entry["skill"]).lower()

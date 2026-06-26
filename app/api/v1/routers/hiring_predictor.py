@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import session_dep
+from app.api.v1.deps import candidate_session_dep, company_session_dep
 from app.core.config import Settings, get_settings
 from app.llm import LLMClient, get_llm_client
 from app.schemas.hiring_predictor import (
@@ -39,7 +39,8 @@ def _service_dep(
 )
 def predict_hiring_probability(
     body: HiringProbabilityRequest,
-    session: Session = Depends(session_dep),
+    candidate_session: Session = Depends(candidate_session_dep),
+    company_session: Session = Depends(company_session_dep),
     service: HiringPredictorService = Depends(_service_dep),
 ) -> HiringProbabilityResponse:
     """
@@ -58,7 +59,8 @@ def predict_hiring_probability(
     response shape is identical either way; check `model_type` to know which.
     """
     return service.predict(
-        session,
+        candidate_session,
+        company_session,
         candidate_id=body.candidate_id,
         job_id=body.job_id,
         force_recompute=body.force_recompute,

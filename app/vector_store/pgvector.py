@@ -77,8 +77,8 @@ class PgVectorStore(VectorStore):
                 JobEmbedding.model,
                 (1.0 - distance).label("similarity"),
                 Job.title,
-                Job.company,
-                Job.location,
+                Job.company_id,
+                Job.workplace_location,
             )
             .join(Job, Job.id == JobEmbedding.job_id)
             .order_by(distance)
@@ -91,8 +91,11 @@ class PgVectorStore(VectorStore):
                 similarity=float(row.similarity),
                 model=row.model,
                 title=row.title,
-                company=row.company,
-                location=row.location,
+                # New schema doesn't carry a company name string column on `jobs`.
+                # Returning the company_id as a string keeps the field populated;
+                # callers that need the human name should look it up separately.
+                company=str(row.company_id) if row.company_id is not None else None,
+                location=row.workplace_location,
             )
             for row in rows
         ]

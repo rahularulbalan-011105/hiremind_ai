@@ -11,6 +11,8 @@ from app.db.models import FakeProfileScore
 
 
 class FakeProfileRepository:
+    """Lives in `hiremind_candidate`."""
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -34,20 +36,41 @@ class FakeProfileRepository:
         risk_level: str,
         anomalies_blob: dict,
     ) -> FakeProfileScore:
+        """
+        Accepts the legacy blob shape:
+            {"breakdown": [...], "bullets": [...], "github_check": {...}, "anomalies": [...]}
+        Splits it into the live schema's four JSONB columns.
+        """
+        breakdown = anomalies_blob.get("breakdown", []) if isinstance(anomalies_blob, dict) else []
+        bullets = anomalies_blob.get("bullets", []) if isinstance(anomalies_blob, dict) else []
+        github_check = (
+            anomalies_blob.get("github_check", {}) if isinstance(anomalies_blob, dict) else {}
+        )
+        anomalies = (
+            anomalies_blob.get("anomalies", []) if isinstance(anomalies_blob, dict) else []
+        )
+
+        score_dec = Decimal(str(round(trust_score, 2)))
         stmt = (
             pg_insert(FakeProfileScore)
             .values(
                 candidate_id=candidate_id,
-                trust_score=Decimal(str(round(trust_score, 2))),
+                trust_score=score_dec,
                 risk_level=risk_level,
-                anomalies=anomalies_blob,
+                anomalies=anomalies,
+                breakdown=breakdown,
+                bullets=bullets,
+                github_check=github_check,
             )
             .on_conflict_do_update(
                 index_elements=[FakeProfileScore.candidate_id],
                 set_={
-                    "trust_score": Decimal(str(round(trust_score, 2))),
+                    "trust_score": score_dec,
                     "risk_level": risk_level,
-                    "anomalies": anomalies_blob,
+                    "anomalies": anomalies,
+                    "breakdown": breakdown,
+                    "bullets": bullets,
+                    "github_check": github_check,
                 },
             )
             .returning(FakeProfileScore)

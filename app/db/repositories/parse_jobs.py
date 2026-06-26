@@ -8,11 +8,15 @@ from app.schemas.resume_parser import ParseJobStatus
 
 
 class ParseJobRepository:
+    """Lives in `hiremind_candidate`."""
+
     def __init__(self, session: Session):
         self.session = session
 
-    def create(self, source_url: str | None) -> ParseJob:
-        job = ParseJob(status="queued", source_url=source_url)
+    def create(
+        self, source_url: str | None = None, file_key: str | None = None
+    ) -> ParseJob:
+        job = ParseJob(status="queued", source_url=source_url, file_key=file_key)
         self.session.add(job)
         self.session.commit()
         self.session.refresh(job)
@@ -35,7 +39,8 @@ class ParseJobRepository:
         job.status = status
         job.updated_at = datetime.now(timezone.utc)
         if candidate_id is not None:
-            job.candidate_id = candidate_id
+            # Schema column is `candidate_user_id` but stores the candidate id.
+            job.candidate_user_id = candidate_id
         if error is not None:
             job.error = error[:2000]
         self.session.commit()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import session_dep
+from app.api.v1.deps import company_session_dep
 from app.schemas.duplicate_job import DuplicateCheckRequest, DuplicateCheckResponse
 from app.services.duplicate_jobs import DuplicateJobService
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/jobs", tags=["duplicate-jobs"])
 )
 def duplicate_check(
     body: DuplicateCheckRequest,
-    session: Session = Depends(session_dep),
+    session: Session = Depends(company_session_dep),
 ) -> DuplicateCheckResponse:
     """
     **Example request**:

@@ -1,3 +1,10 @@
+"""
+Match engine — single-pair and recruiter fan-out endpoints.
+
+Cross-DB note: candidate data + resume embeddings live in `hiremind_candidate`,
+while job data + JD embeddings + the `match_scores` cache live in `hiremind_company`.
+Every public method here therefore takes TWO sessions, one per DB.
+"""
 from __future__ import annotations
 
 import json
@@ -39,24 +46,26 @@ class MatchEngineService:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
+    # ─────────────────────────── single pair ───────────────────────────
     def score(
         self,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         *,
         candidate_id: UUID,
         job_id: UUID,
         weights: MatchWeights,
         force_recompute: bool,
     ) -> MatchResponse:
-        match_repo = MatchScoreRepository(session)
+        match_repo = MatchScoreRepository(company_session)
 
         if not force_recompute:
             cached = match_repo.get(candidate_id, job_id)
             if cached is not None:
                 return self._cached_to_response(cached, weights)
 
-        candidate_repo = CandidateRepository(session)
-        job_repo = JobRepository(session)
+        candidate_repo = CandidateRepository(candidate_session)
+        job_repo = JobRepository(company_session)
 
         candidate = candidate_repo.get(candidate_id)
         if candidate is None:
@@ -65,14 +74,16 @@ class MatchEngineService:
         if job is None:
             raise NotFoundError(f"Job {job_id} not found.")
 
-        # 1. Semantic similarity via pgvector
-        cosine = self._cosine_similarity(session, candidate_id, job_id)
+        # 1. Semantic similarity via pgvector — vectors live in two DBs.
+        cosine = self._cosine_similarity(
+            candidate_session, company_session, candidate_id, job_id
+        )
 
-        # 2-6. Skill overlap, experience, location, notice, salary
+        # 2-6. Skill / experience / location / notice / salary
         candidate_skills = candidate_repo.get_skills(candidate_id)
         candidate_years = candidate_repo.years_of_experience(candidate_id)
         prefs = candidate_repo.get_preferences(candidate_id)
-        required_skills = JobRepository.required_skills(job)
+        required_skills = job_repo.required_skills(job)
         required_years = JobRepository.required_years(job)
 
         sub = compute_subscores(
@@ -104,10 +115,8 @@ class MatchEngineService:
             w_sal=weights.salary,
         )
 
-        # 4. Reasoning (LLM with rule-based fallback)
-        bullets = self._reasoning(job_title=job.title, job_summary=job.description, sub=sub)
+        bullets = self._reasoning(job_title=job.title, job_summary=job.description or "", sub=sub)
 
-        # 5. Persist
         blob = {
             "bullets": bullets,
             "subscores": {
@@ -144,26 +153,23 @@ class MatchEngineService:
             computed_at=row.computed_at if row.computed_at.tzinfo else row.computed_at.replace(tzinfo=timezone.utc),
         )
 
+    # ─────────────────────────── fan-out by job ───────────────────────
     def score_by_job(
         self,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         *,
         job_id: UUID,
         weights: MatchWeights,
         top_k: int,
     ) -> MatchByJobResponse:
-        """
-        Score every candidate (that has an embedding) against this job.
-        Deterministic math only — NO LLM call per candidate. Use the single-pair
-        `score()` endpoint to drill into a specific match with full LLM reasoning.
-        """
-        job_repo = JobRepository(session)
+        job_repo = JobRepository(company_session)
         job = job_repo.get(job_id)
         if job is None:
             raise NotFoundError(f"Job {job_id} not found.")
 
-        # JD embedding (required)
-        jd_vec_raw = session.execute(
+        # JD embedding (company DB, required)
+        jd_vec_raw = company_session.execute(
             select(JobEmbedding.embedding).where(JobEmbedding.job_id == job_id)
         ).scalar_one_or_none()
         if jd_vec_raw is None:
@@ -173,14 +179,14 @@ class MatchEngineService:
         jd_vec = np.asarray(jd_vec_raw, dtype=np.float64)
         jd_norm = float(np.linalg.norm(jd_vec))
 
-        required_skills = JobRepository.required_skills(job)
+        required_skills = job_repo.required_skills(job)
         required_years = JobRepository.required_years(job)
         job_salary = JobRepository.salary(job)
         job_notice_max = JobRepository.notice_period_max(job)
         job_location = job.location
 
-        # All candidates that have an embedding, joined with their resume vector
-        rows = session.execute(
+        # All candidates that have an embedding — candidate DB
+        rows = candidate_session.execute(
             select(
                 Candidate.id,
                 Candidate.full_name,
@@ -190,7 +196,7 @@ class MatchEngineService:
             ).join(ResumeEmbedding, ResumeEmbedding.candidate_id == Candidate.id)
         ).all()
 
-        candidate_repo = CandidateRepository(session)
+        candidate_repo = CandidateRepository(candidate_session)
         candidate_ids = [r[0] for r in rows]
         prefs_map = candidate_repo.get_preferences_many(candidate_ids)
         hits: list[CandidateMatchHit] = []
@@ -260,9 +266,9 @@ class MatchEngineService:
         hits.sort(key=lambda h: h.match_score, reverse=True)
         top_hits = hits[:top_k]
 
-        # Enrich top-K with fake_profile_risk + pairwise duplicates (within this set).
+        # Enrich top-K with fake_profile_risk (candidate DB) + pairwise duplicates.
         self._enrich_with_trust_and_duplicates(
-            session=session,
+            candidate_session=candidate_session,
             hits=top_hits,
             embeddings={h.candidate_id: embeddings[h.candidate_id] for h in top_hits},
             candidate_repo=candidate_repo,
@@ -280,7 +286,7 @@ class MatchEngineService:
     def _enrich_with_trust_and_duplicates(
         self,
         *,
-        session: Session,
+        candidate_session: Session,
         hits: list[CandidateMatchHit],
         embeddings: dict[UUID, np.ndarray],
         candidate_repo: CandidateRepository,
@@ -289,7 +295,7 @@ class MatchEngineService:
             return
 
         ids = [h.candidate_id for h in hits]
-        fake_repo = FakeProfileRepository(session)
+        fake_repo = FakeProfileRepository(candidate_session)
         fp_map = fake_repo.get_many(ids)
         contact = candidate_repo.get_contact_info_many(ids)
         names_by_id = {h.candidate_id: h.full_name for h in hits}
@@ -360,25 +366,27 @@ class MatchEngineService:
             parts.append(f"{len(sub.missing_skills)} missing")
         if sub.required_years is not None:
             gap = sub.candidate_years - sub.required_years
-            if gap >= 0:
-                parts.append(f"{gap:+.1f}y exp")
-            else:
-                parts.append(f"{gap:.1f}y exp")
+            parts.append(f"{gap:+.1f}y exp" if gap >= 0 else f"{gap:.1f}y exp")
         if not parts:
             parts.append("semantic only")
         return " · ".join(parts)
 
-    # ---------- internals ----------
-
-    def _cosine_similarity(self, session: Session, candidate_id: UUID, job_id: UUID) -> float:
-        resume_vec = session.execute(
+    # ── internals ──────────────────────────────────────────────────────
+    def _cosine_similarity(
+        self,
+        candidate_session: Session,
+        company_session: Session,
+        candidate_id: UUID,
+        job_id: UUID,
+    ) -> float:
+        resume_vec = candidate_session.execute(
             select(ResumeEmbedding.embedding).where(ResumeEmbedding.candidate_id == candidate_id)
         ).scalar_one_or_none()
         if resume_vec is None:
             raise NotFoundError(
                 f"Candidate {candidate_id} has no resume embedding. Re-parse the resume first."
             )
-        job_vec = session.execute(
+        job_vec = company_session.execute(
             select(JobEmbedding.embedding).where(JobEmbedding.job_id == job_id)
         ).scalar_one_or_none()
         if job_vec is None:
@@ -429,9 +437,10 @@ class MatchEngineService:
 
     @staticmethod
     def _cached_to_response(row, weights: MatchWeights) -> MatchResponse:
-        blob = row.reasoning if isinstance(row.reasoning, dict) else {}
-        sub = blob.get("subscores") or {}
-        stored_weights = blob.get("weights") or {}
+        # The live schema splits the old `reasoning` blob into separate columns.
+        bullets = list(row.reasoning) if row.reasoning else []
+        sub = dict(row.subscores or {})
+        stored_weights = dict(row.weights or {})
         weights_used = MatchWeights(
             semantic=stored_weights.get("semantic", weights.semantic),
             skill_overlap=stored_weights.get("skill_overlap", weights.skill_overlap),
@@ -455,7 +464,7 @@ class MatchEngineService:
                 notice_period=float(sub.get("notice_period", 50)),
                 salary=float(sub.get("salary", 50)),
             ),
-            reasoning=list(blob.get("bullets") or []),
+            reasoning=bullets,
             weights_used=weights_used,
             cached=True,
             computed_at=computed,

@@ -11,6 +11,9 @@ from app.db.models import GhostJobScore
 
 
 class GhostJobRepository:
+    """Lives in `hiremind_company`. Column is `classification` in the live schema —
+    we keep the `risk_classification` kwarg name for backwards-compatibility."""
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -27,19 +30,20 @@ class GhostJobRepository:
         risk_classification: str,
         signals_blob: dict,
     ) -> GhostJobScore:
+        score_dec = Decimal(str(round(ghost_score, 2)))
         stmt = (
             pg_insert(GhostJobScore)
             .values(
                 job_id=job_id,
-                ghost_score=Decimal(str(round(ghost_score, 2))),
-                risk_classification=risk_classification,
+                ghost_score=score_dec,
+                classification=risk_classification,
                 signals=signals_blob,
             )
             .on_conflict_do_update(
                 index_elements=[GhostJobScore.job_id],
                 set_={
-                    "ghost_score": Decimal(str(round(ghost_score, 2))),
-                    "risk_classification": risk_classification,
+                    "ghost_score": score_dec,
+                    "classification": risk_classification,
                     "signals": signals_blob,
                 },
             )

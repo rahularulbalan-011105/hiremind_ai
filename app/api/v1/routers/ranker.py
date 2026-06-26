@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import session_dep
+from app.api.v1.deps import candidate_session_dep, company_session_dep
 from app.core.config import Settings, get_settings
 from app.llm import LLMClient, get_llm_client
 from app.schemas.ranker import (
@@ -54,7 +54,8 @@ def _service_dep(
 )
 def rank_candidates(
     body: RankerRequest,
-    session: Session = Depends(session_dep),
+    candidate_session: Session = Depends(candidate_session_dep),
+    company_session: Session = Depends(company_session_dep),
     service: RankerService = Depends(_service_dep),
 ) -> RankerResponse:
     """
@@ -75,7 +76,8 @@ def rank_candidates(
     """
     weights = body.weights or RankerWeights()
     return service.rank(
-        session,
+        candidate_session,
+        company_session,
         job_id=body.job_id,
         weights=weights,
         top_k=body.top_k,
@@ -90,7 +92,8 @@ def rank_candidates(
 )
 def rank_compare(
     body: CompareRequest,
-    session: Session = Depends(session_dep),
+    candidate_session: Session = Depends(candidate_session_dep),
+    company_session: Session = Depends(company_session_dep),
     service: RankerService = Depends(_service_dep),
 ) -> CompareResponse:
     """
@@ -111,7 +114,8 @@ def rank_compare(
     """
     weights = body.weights or RankerWeights()
     return service.compare(
-        session,
+        candidate_session,
+        company_session,
         job_id=body.job_id,
         candidate_ids=body.candidate_ids,
         weights=weights,

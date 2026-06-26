@@ -67,26 +67,28 @@ class HiringPredictorService:
 
     def predict(
         self,
-        session: Session,
+        candidate_session: Session,
+        company_session: Session,
         *,
         candidate_id: UUID,
         job_id: UUID,
         force_recompute: bool,
         include_shap: bool,
     ) -> HiringProbabilityResponse:
-        if not CandidateRepository(session).exists(candidate_id):
+        if not CandidateRepository(candidate_session).exists(candidate_id):
             raise NotFoundError(f"Candidate {candidate_id} not found.")
-        if not JobRepository(session).exists(job_id):
+        if not JobRepository(company_session).exists(job_id):
             raise NotFoundError(f"Job {job_id} not found.")
 
-        repo = HiringPredictionRepository(session)
+        repo = HiringPredictionRepository(company_session)
         if not force_recompute:
             cached = repo.get(candidate_id, job_id, self.model_version)
-            if cached is not None and isinstance(cached.shap, dict):
+            if cached is not None:
                 return self._cached_to_response(cached, include_shap)
 
         fv: FeatureVector = self.extractor.extract(
-            session, candidate_id=candidate_id, job_id=job_id
+            candidate_session, company_session,
+            candidate_id=candidate_id, job_id=job_id,
         )
 
         if self._xgb is not None:
@@ -109,6 +111,7 @@ class HiringPredictorService:
             confidence=result.confidence,
             shap_blob=shap_blob,
             model_version=self.model_version,
+            model_type=self.model_type,
         )
 
         return HiringProbabilityResponse(
@@ -134,16 +137,19 @@ class HiringPredictorService:
     # ---------- internals ----------
 
     def _cached_to_response(self, row, include_shap: bool) -> HiringProbabilityResponse:
+        # The live schema stores model_type as a dedicated column; the
+        # features_used + shap_explanations payload still lives in `shap`.
         blob = row.shap if isinstance(row.shap, dict) else {}
         features = blob.get("features_used") or {}
         shap_list = blob.get("shap_explanations") or []
+        model_type_used = row.model_type or blob.get("model_type", self.model_type)
         return HiringProbabilityResponse(
             candidate_id=row.candidate_id,
             job_id=row.job_id,
             probability=float(row.probability),
             confidence=float(row.confidence),
             model_version=row.model_version,
-            model_type=blob.get("model_type", self.model_type),  # type: ignore[arg-type]
+            model_type=model_type_used,  # type: ignore[arg-type]
             features_used={str(k): float(v) for k, v in features.items()},
             shap_explanations=(
                 [
