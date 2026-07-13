@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.deps import session_dep
@@ -36,12 +36,18 @@ _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 )
 def parse_resume(
     file: UploadFile = File(...),
+    candidate_id: uuid.UUID | None = Form(default=None),
     session: Session = Depends(session_dep),
     settings: Settings = Depends(get_settings),
 ) -> ParseJobAccepted:
     """
     Returns `202 Accepted` immediately with a `parse_job_id`. Poll
     `GET /api/v1/resumes/parse-jobs/{id}` until status is `succeeded` or `failed`.
+
+    Optional `candidate_id` (multipart form field) binds the parse to an existing
+    candidate profile (candidate-side self-service upload) so the resume embedding is
+    stored under that profile id — required for the candidate's own job match scores.
+    Omit it for recruiter bulk-import, which creates a fresh candidate row.
     """
     if not file.filename:
         raise ValidationError("Upload is missing a filename.")
@@ -75,7 +81,7 @@ def parse_resume(
 
     celery_app.send_task(
         "app.workers.tasks.resume_parser.parse_resume",
-        args=[str(job.id), str(stored_path)],
+        args=[str(job.id), str(stored_path), str(candidate_id) if candidate_id else None],
         queue="resume_parsing",
     )
 
@@ -97,7 +103,7 @@ def get_parse_job(
     return ParseJobStatusResponse(
         parse_job_id=job.id,
         status=job.status,  # type: ignore[arg-type]
-        candidate_id=job.candidate_id,
+        candidate_id=job.candidate_user_id,
         source_url=job.source_url,
         error=job.error,
         created_at=_aware(job.created_at),
@@ -114,10 +120,11 @@ def get_candidate(
     candidate_id: uuid.UUID,
     session: Session = Depends(session_dep),
 ) -> CandidateProfile:
-    bundle = CandidateRepository(session).get_with_children(candidate_id)
+    repo = CandidateRepository(session)
+    bundle = repo.get_with_children(candidate_id)
     if bundle is None:
         raise NotFoundError(f"Candidate {candidate_id} not found.")
-    candidate, experiences, educations, skills, certifications, languages = bundle
+    candidate, experiences, educations, _skills, certifications, _languages = bundle
     return CandidateProfile(
         id=candidate.id,
         full_name=candidate.full_name,
@@ -125,15 +132,16 @@ def get_candidate(
         phone=candidate.phone,
         headline=candidate.headline,
         location=candidate.location,
-        skills=[s.skill for s in skills],
+        # Skill names resolved via the master `skills` table (candidate_skills stores skill_id).
+        skills=repo.get_skills(candidate_id),
         experience=[
             ParsedExperience(
-                company=e.company,
-                title=e.title,
+                company=e.company_name,
+                title=e.job_title,
                 start_date=e.start_date,
                 end_date=e.end_date,
-                is_current=e.is_current,
-                description=e.description,
+                is_current=e.currently_working,
+                description=None,
             )
             for e in experiences
         ],
@@ -141,23 +149,23 @@ def get_candidate(
             ParsedEducation(
                 institution=e.institution,
                 degree=e.degree,
-                field=e.field,
-                start_date=e.start_date,
-                end_date=e.end_date,
+                field=e.specialization,
+                start_date=None,
+                end_date=None,
                 grade=e.grade,
             )
             for e in educations
         ],
         certifications=[
             ParsedCertification(
-                name=c.name,
-                issuer=c.issuer,
-                issued_date=c.issued_date,
-                expires_date=c.expires_date,
+                name=c.certification_name,
+                issuer=c.issuing_institution,
+                issued_date=None,
+                expires_date=c.valid_till,
             )
             for c in certifications
         ],
-        languages=[ParsedLanguage(language=l.language, proficiency=l.proficiency) for l in languages],
+        languages=[],
         raw_resume_url=candidate.raw_resume_url,
         created_at=_aware(candidate.created_at),
     )

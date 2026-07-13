@@ -25,6 +25,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
+
 from app.db.models import (
     Candidate,
     CandidateCertification,
@@ -244,6 +248,7 @@ class CandidateRepository:
         self,
         parsed: ParsedResume,
         *,
+        candidate_id: UUID | None = None,
         user_id: UUID | None = None,
         raw_resume_url: str | None = None,
         raw_text: str | None = None,
@@ -251,14 +256,19 @@ class CandidateRepository:
         """
         Upsert candidate + replace children based on a freshly-parsed resume.
 
-        In production, `user_id` should be the auth user from users-service.
-        For the dev test harness we generate a fresh UUID — the resulting row
-        is an orphan from the users-service POV but unblocks local testing.
+        If `candidate_id` is given (candidate-side self-service flow: the logged-in
+        candidate uploads their own resume), the existing profile row with that id is
+        updated in place — so the resume embedding is stored under the same profile id
+        the match engine uses, and the parsed skills/experience replace that profile's
+        children. Otherwise we fall back to email-match, then to creating a new row
+        (recruiter bulk-import flow); `user_id` seeds a new row's owner.
         """
         from uuid import uuid4
 
         candidate: Candidate | None = None
-        if parsed.email:
+        if candidate_id is not None:
+            candidate = self.session.get(Candidate, candidate_id)
+        if candidate is None and parsed.email:
             candidate = self.find_by_email(parsed.email)
 
         if candidate is None:
@@ -347,10 +357,17 @@ class CandidateRepository:
 
     def _add_children(self, candidate_id: UUID, parsed: ParsedResume) -> None:
         for exp in parsed.experience:
+            # candidate_work_experiences.start_date + company_name are NOT NULL in the
+            # candidate DB. A résumé experience the LLM couldn't date would otherwise
+            # abort the entire parse transaction (and lose the résumé embedding), so we
+            # skip an undated row and coalesce a blank company rather than fail the parse.
+            if exp.start_date is None:
+                log.warning("resume_parse_skip_experience_no_start_date", company=exp.company)
+                continue
             self.session.add(
                 CandidateExperience(
                     candidate_id=candidate_id,
-                    company_name=exp.company,
+                    company_name=(exp.company or "").strip() or "—",
                     job_title=exp.title or "",
                     employment_type="FULL_TIME",  # default; the parser doesn't extract this
                     start_date=exp.start_date,

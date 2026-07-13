@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+*.err
+*.log
+*.docx
+.env
+.env.*
+artifacts/tmp

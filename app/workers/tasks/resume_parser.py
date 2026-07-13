@@ -40,14 +40,19 @@ def _get_embedding_service() -> EmbeddingService:
     autoretry_for=(),
     max_retries=0,
 )
-def parse_resume(self, parse_job_id: str, file_path: str) -> dict:
+def parse_resume(self, parse_job_id: str, file_path: str, candidate_id: str | None = None) -> dict:
     """
     Parse one uploaded resume file end-to-end. State transitions are persisted
     in `parse_jobs`. We don't auto-retry — failures are surfaced to the user.
+
+    `candidate_id` (optional) binds the parse to an existing candidate profile
+    (candidate-side self-service upload) so the resume embedding is stored under
+    that profile id; omit it for recruiter bulk-import (creates a new row).
     """
     settings = get_settings()
     job_uuid = UUID(parse_job_id)
     path = Path(file_path)
+    bind_candidate_id = UUID(candidate_id) if candidate_id else None
 
     # Resume parsing writes to the candidate DB (candidate, parse_jobs,
     # resume_embeddings, fake_profile_scores etc.).
@@ -56,9 +61,9 @@ def parse_resume(self, parse_job_id: str, file_path: str) -> dict:
     try:
         llm = get_llm_client(settings)
         service = ResumeParserService(settings, llm, _get_embedding_service())
-        candidate_id = service.parse(session, job_uuid, path)
-        ParseJobRepository(session).mark(job_uuid, "succeeded", candidate_id=candidate_id)
-        return {"status": "succeeded", "candidate_id": str(candidate_id)}
+        result_candidate_id = service.parse(session, job_uuid, path, bind_candidate_id=bind_candidate_id)
+        ParseJobRepository(session).mark(job_uuid, "succeeded", candidate_id=result_candidate_id)
+        return {"status": "succeeded", "candidate_id": str(result_candidate_id)}
     except HrmsAIError as exc:
         log.warning("parse_task_known_error", parse_job_id=parse_job_id, error=exc.message)
         ParseJobRepository(session).mark(job_uuid, "failed", error=exc.message)

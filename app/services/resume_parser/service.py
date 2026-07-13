@@ -49,8 +49,10 @@ class ResumeParserService:
         self.llm = llm
         self.embedding_service = embedding_service
 
-    def parse(self, session: Session, parse_job_id: UUID, file_path: Path) -> UUID:
-        log.info("resume_parse_start", parse_job_id=str(parse_job_id), path=str(file_path))
+    def parse(self, session: Session, parse_job_id: UUID, file_path: Path,
+              bind_candidate_id: UUID | None = None) -> UUID:
+        log.info("resume_parse_start", parse_job_id=str(parse_job_id), path=str(file_path),
+                 bind_candidate_id=str(bind_candidate_id) if bind_candidate_id else None)
         ParseJobRepository(session).mark(parse_job_id, "running")
 
         # 1. Text extract
@@ -72,25 +74,40 @@ class ResumeParserService:
         # 3. LLM parse + validation (one stricter retry on schema failure)
         parsed = self._call_llm_with_retry(raw_text)
 
-        # 4. Persist
+        # 4. Persist. If the structured insert fails but we're binding to an existing
+        #    profile (candidate self-service upload), don't lose the résumé embedding —
+        #    the candidate row already exists, so we can still store the vector under it.
         candidate_repo = CandidateRepository(session)
-        candidate = candidate_repo.create_from_parsed(
-            parsed, raw_resume_url=f"file://{file_path.as_posix()}", raw_text=raw_text
-        )
+        embed_target_id = bind_candidate_id
+        try:
+            candidate = candidate_repo.create_from_parsed(
+                parsed, candidate_id=bind_candidate_id,
+                raw_resume_url=f"file://{file_path.as_posix()}", raw_text=raw_text
+            )
+            embed_target_id = candidate.id
+        except Exception as exc:  # noqa: BLE001 — degrade gracefully
+            session.rollback()
+            if bind_candidate_id is None:
+                raise  # recruiter-import flow has no existing row to attach the vector to
+            log.warning(
+                "resume_parse_structured_persist_failed_embedding_only",
+                parse_job_id=str(parse_job_id), error=str(exc),
+            )
 
-        # 5. Generate embedding from the parsed candidate text
+        # 5. Generate + store the résumé embedding (from parsed text) so the AI match's
+        #    semantic factor works even when the structured persist above degraded.
         embed_text = self._candidate_embed_text(parsed)
         vector = self.embedding_service.embed(embed_text)
-        self.embedding_service.store(session, "resume", candidate.id, vector)
+        self.embedding_service.store(session, "resume", embed_target_id, vector)
 
         log.info(
             "resume_parse_done",
             parse_job_id=str(parse_job_id),
-            candidate_id=str(candidate.id),
+            candidate_id=str(embed_target_id),
             skills=len(parsed.skills),
             experience=len(parsed.experience),
         )
-        return candidate.id
+        return embed_target_id
 
     # ---------- internals ----------
 

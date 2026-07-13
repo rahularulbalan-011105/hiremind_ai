@@ -167,7 +167,10 @@ def salary_score(candidate_expected: dict | None, job_salary: dict | None) -> fl
       - candidate expects below JD min → 100 (they're cheaper than budget)
     Currency mismatch falls back to neutral.
     """
-    if not job_salary or not candidate_expected:
+    # Both must be structured {min, max, currency} dicts. The candidate's expected salary
+    # is sometimes stored as free text (e.g. "10 – 15 LPA"); we can't compare that to a
+    # numeric JD range, so fall back to neutral rather than crashing on str.get().
+    if not isinstance(job_salary, dict) or not isinstance(candidate_expected, dict):
         return _NEUTRAL
     if (candidate_expected.get("currency") or "INR") != (job_salary.get("currency") or "INR"):
         return _NEUTRAL
