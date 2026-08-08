@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -341,12 +341,29 @@ class CandidateRepository:
             self.session.query(model).filter(model.candidate_id == candidate_id).delete()
 
     def _ensure_skill(self, name: str) -> UUID:
-        """Find-or-create on the master `skills` table. Returns the skill_id."""
+        """Find-or-create on the master `skills` table. Returns the skill_id.
+
+        Two things this deliberately does not do:
+
+        * It does not use ``ilike``. A parsed skill name is arbitrary text off a resume,
+          and ``ilike`` treats ``%`` and ``_`` in it as wildcards — "Node_js" would match
+          "Node.js" and anything else shaped like it. Compare lowercased equality instead.
+
+        * It does not assume the lookup returns at most one row. ``skills.name`` is UNIQUE,
+          but case-sensitively so: "Java" and "java" can both exist legally, and then a
+          case-insensitive lookup finds both. That raised MultipleResultsFound out of
+          ``scalar_one_or_none()`` and failed the whole parse — the resume was read
+          correctly and then thrown away at the last step. Take the first match on a
+          stable ordering instead.
+        """
         normalized = name.strip()
         if not normalized:
             raise ValueError("empty skill name")
         existing = self.session.execute(
-            select(Skill.id).where(Skill.name.ilike(normalized))
+            select(Skill.id)
+            .where(func.lower(Skill.name) == normalized.lower())
+            .order_by(Skill.name)
+            .limit(1)
         ).scalar_one_or_none()
         if existing is not None:
             return existing
