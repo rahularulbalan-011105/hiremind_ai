@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     grok_model: str = "grok-2-latest"
     groq_api_key: str = ""
     groq_api_base: str = "https://api.groq.com/openai/v1"
-    groq_model: str = "llama-3.3-70b-versatile"
+    # Groq retired llama-3.3-70b-versatile on 2026-08-16; it now 404s as model_not_found.
+    # openai/gpt-oss-120b is Groq's recommended replacement. Override with GROQ_MODEL.
+    groq_model: str = "openai/gpt-oss-120b"
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
 
