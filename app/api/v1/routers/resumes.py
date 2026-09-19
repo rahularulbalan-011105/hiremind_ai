@@ -141,7 +141,7 @@ def get_candidate(
                 start_date=e.start_date,
                 end_date=e.end_date,
                 is_current=e.currently_working,
-                description=None,
+                description=e.description,
             )
             for e in experiences
         ],

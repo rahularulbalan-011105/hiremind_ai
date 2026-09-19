@@ -390,6 +390,7 @@ class CandidateRepository:
                     start_date=exp.start_date,
                     end_date=exp.end_date,
                     currently_working=exp.is_current,
+                    description=(exp.description or "").strip() or None,
                 )
             )
         for edu in parsed.education:
