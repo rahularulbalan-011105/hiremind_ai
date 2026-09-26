@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import UUID
 
 from celery import shared_task
+from celery.signals import worker_process_init
 
 from app.core.config import get_settings
 from app.core.exceptions import HrmsAIError
@@ -32,6 +33,22 @@ def _get_embedding_service() -> EmbeddingService:
         _embedding_service = EmbeddingService(settings.embedding_model, store)
         _embedding_service.warm_up()
     return _embedding_service
+
+
+@worker_process_init.connect
+def _warm_up_worker(**_) -> None:
+    """Load the embedding model when the worker starts, not inside the first parse.
+
+    The model is ~420MB and takes tens of seconds to load on the production box. Loading
+    it lazily meant the first résumé after every worker start — and after each recycle at
+    `worker_max_tasks_per_child` — ran far slower than the rest, long enough for the
+    candidate's parse-preview to give up and report that the résumé could not be read.
+    """
+    try:
+        _get_embedding_service()
+        log.info("worker_warm_up_done")
+    except Exception as exc:  # noqa: BLE001 — a cold worker is still a working worker
+        log.warning("worker_warm_up_failed", error=str(exc))
 
 
 @shared_task(

@@ -24,7 +24,10 @@ from app.schemas.resume_parser import (
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
-_ALLOWED_SUFFIXES = {".pdf", ".docx", ".doc"}
+# No legacy .doc: it is an OLE binary, which python-docx cannot open, so such an upload
+# was accepted and then failed to extract a single character. Rejecting it up front tells
+# the candidate what to do instead of reporting an unreadable résumé.
+_ALLOWED_SUFFIXES = {".pdf", ".docx"}
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
@@ -53,7 +56,10 @@ def parse_resume(
         raise ValidationError("Upload is missing a filename.")
     suffix = Path(file.filename).suffix.lower()
     if suffix not in _ALLOWED_SUFFIXES:
-        raise ValidationError(f"Unsupported file type {suffix!r}. Use PDF or DOCX.")
+        raise ValidationError(
+            f"Unsupported file type {suffix!r}. Use PDF or DOCX"
+            + (" — open the .doc in Word and save it as .docx." if suffix == ".doc" else ".")
+        )
 
     upload_dir = Path(settings.artifacts_dir) / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
